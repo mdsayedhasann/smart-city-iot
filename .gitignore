@@ -1,4 +1,5 @@
-  __pycache__/
-   *.pyc
-   .env
-   .venv/
+dbt-venv/
+dbt_project/target/
+dbt_project/logs/
+logs/
+__pycache__/

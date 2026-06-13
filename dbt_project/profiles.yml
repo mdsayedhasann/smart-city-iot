@@ -1,0 +1,12 @@
+smartcity:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: localhost
+      port: 5432
+      user: cityadmin
+      password: citypass123
+      dbname: smartcity
+      schema: analytics
+      threads: 4

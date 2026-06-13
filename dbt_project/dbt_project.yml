@@ -1,0 +1,9 @@
+name: 'smartcity'
+version: '1.0.0'
+profile: 'smartcity'
+
+model-paths: ["models"]
+
+models:
+  smartcity:
+    +materialized: view
