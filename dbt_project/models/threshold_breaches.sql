@@ -1,3 +1,5 @@
+{{ config(materialized='table') }}
+
 -- Flags each hour where a zone's average PM2.5 exceeds the WHO safety limit.
 -- Builds on the hourly model we already made.
 
