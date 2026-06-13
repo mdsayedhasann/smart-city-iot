@@ -1,91 +1,141 @@
-# Smart City IoT Pipeline
+# Smart City IoT Monitoring Pipeline
 
-This project simulates IoT sensor data for a smart city (air quality, traffic, energy) across 4 city zones, streams it through Kafka, stores it in a TimescaleDB time-series database, transforms it with dbt into analytics-ready tables, and visualizes it live in Grafana. It also injects deliberate sensor failures (dead, drifting, and silent sensors) so the monitoring and data-quality checks can be tested.
+A complete data-engineering pipeline that simulates a smart city's IoT sensors (air quality, traffic, energy) across 4 zones, streams the data through Kafka, stores it in TimescaleDB, transforms it with dbt, and shows it live on Grafana dashboards. It also injects deliberate sensor failures (dead, drifting, silent) so the monitoring can be tested.
+
+This README is written so that anyone can clone the repo and get the whole thing running and visible on their own machine, step by step. Just follow it top to bottom.
+
+---
 
 ## Architecture
 
 ```
-producer.py  ->  Kafka (3 topics)  ->  consumer.py  ->  TimescaleDB (raw tables)  ->  dbt (analytics models)  ->  Grafana
+producer.py  ->  Kafka (3 topics)  ->  consumer.py  ->  TimescaleDB  ->  dbt models  ->  Grafana dashboards
 ```
 
-- Streaming layer (runs continuously): the producer publishes sensor readings to Kafka topics; the consumer reads them and writes to TimescaleDB.
-- Transformation layer (run on demand): dbt aggregates raw readings into hourly summaries, sensor-health metrics, threshold breaches, and cross-sensor correlation.
-- A simpler `simulator.py` is also included, which writes directly to TimescaleDB without Kafka (useful for quick tests and replaying the injected failures).
+Everything runs in Docker except the Python scripts and dbt, which run on your machine.
 
-## Install these first (one-time)
+---
 
-1. **Docker Desktop** - https://www.docker.com/products/docker-desktop/ (open it and leave it running)
-2. **Python 3.12 or 3.13** - https://www.python.org/downloads/ (tick "Add python.exe to PATH"). Note: dbt does not yet support Python 3.14.
+## 1. Install the required software (one time)
+
+Install these three first. Accept the default options unless noted.
+
+1. **Docker Desktop** - https://www.docker.com/products/docker-desktop/
+   - On Windows it will set up WSL2 automatically; just accept the prompts and restart if asked.
+   - After installing, OPEN Docker Desktop and leave it running (you should see the whale icon steady in your taskbar). Nothing below works unless Docker Desktop is open.
+2. **Python 3.12 or 3.13** - https://www.python.org/downloads/
+   - IMPORTANT: on the first install screen, tick the box "Add python.exe to PATH".
+   - Do NOT use Python 3.14 - dbt does not support it yet. 3.12 or 3.13 is required.
 3. **Git** - https://git-scm.com/download/win
 
-## Step 1 - Download the project
+To confirm they installed, open a new terminal (PowerShell on Windows) and run each line - you should get a version number, not an error:
+
+```
+docker --version
+python --version
+git --version
+```
+
+---
+
+## 2. Download the project
+
+In a terminal, run:
 
 ```
 git clone https://github.com/mdsayedhasann/smart-city-iot.git
 cd smart-city-iot
 ```
 
-## Step 2 - Install the Python libraries
+You are now inside the project folder. Run all later commands from here unless told otherwise.
+
+---
+
+## 3. Install the Python libraries
 
 ```
 python -m pip install psycopg2-binary confluent-kafka
 ```
 
-(If pip gives an "Access is denied" error, `python -m pip` as shown is the reliable way to install.)
+(If you see an "Access is denied" error, the `python -m pip` form shown above is the reliable way - use it instead of plain `pip`.)
 
-## Step 3 - Start all services
+---
 
-Make sure Docker Desktop is open, then run:
+## 4. Start all the services (database, Kafka, Grafana)
+
+With Docker Desktop open, run:
 
 ```
 docker compose up -d
 ```
 
-This starts five services:
-- TimescaleDB (database) on port 5432
-- Grafana (dashboards) on port 3000
-- Kafka (event streaming) on port 9092
-- Kafka UI on port 8080
-- (Grafana, Kafka UI, and dbt docs each use a different port to avoid clashes)
+The first time, this downloads several images and takes a few minutes. When done you have five services running:
 
-## Step 4 - Create the tables
+| Service | What it is | Opens at |
+| --- | --- | --- |
+| TimescaleDB | the database | port 5432 (no web page) |
+| Kafka | event streaming | port 9092 (no web page) |
+| Kafka UI | view Kafka messages | http://localhost:8080 |
+| Grafana | the dashboards | http://localhost:3000 |
+
+Check they are running:
+
+```
+docker ps
+```
+
+You should see `smartcity_timescaledb`, `smartcity_kafka`, `smartcity_kafka_ui`, and `smartcity_grafana`.
+
+---
+
+## 5. Create the database tables
 
 ```
 Get-Content setup_tables.sql | docker exec -i smartcity_timescaledb psql -U cityadmin -d smartcity
 ```
 
-(Mac/Linux: `docker exec -i smartcity_timescaledb psql -U cityadmin -d smartcity < setup_tables.sql`)
+(On Mac/Linux use: `docker exec -i smartcity_timescaledb psql -U cityadmin -d smartcity < setup_tables.sql`)
 
-## Step 5 - Run the streaming pipeline
+This creates three tables: raw_air_quality, raw_traffic, raw_energy.
 
-Open two terminals.
+---
 
-Terminal 1 (consumer - reads Kafka, writes to the database):
+## 6. Start the data flowing (two terminals)
+
+The pipeline needs two scripts running at the same time, so open TWO terminals.
+
+Terminal 1 - the consumer (reads from Kafka, writes to the database). Start this one first:
 
 ```
 python consumer.py
 ```
 
-Terminal 2 (producer - publishes readings to Kafka):
+Terminal 2 - open a new terminal (in VS Code: Terminal > New Terminal), then the producer (creates sensor readings and sends them to Kafka):
 
 ```
 python producer.py
 ```
 
-Both print activity every 5 seconds. Press Ctrl+C in each to stop.
+Both print a line every 5 seconds. Leave them running while you use the dashboards. Press Ctrl+C in each to stop later.
 
-## Step 6 - Run the dbt transformations
+Tip: there is also `python simulator.py`, which writes straight to the database without Kafka - handy for a quick test, but the producer + consumer pair is the real pipeline.
 
-dbt runs in its own Python sandbox (created with Python 3.12/3.13 because dbt does not support 3.14 yet).
+---
 
-First-time setup:
+## 7. Build the dbt analytics models
+
+dbt runs in its own small Python environment (because dbt needs Python 3.12/3.13).
+
+First-time setup (creates the environment and installs dbt):
 
 ```
 py -3.12 -m venv dbt-venv
 .\dbt-venv\Scripts\python.exe -m pip install "dbt-core==1.10.*" "dbt-postgres==1.10.*"
 ```
 
-Then build the models (from inside the dbt_project folder):
+(If `py -3.12` errors, use whichever 3.12/3.13 you have, e.g. `py -3.13 -m venv dbt-venv`.)
+
+Then build and test the models:
 
 ```
 cd dbt_project
@@ -94,57 +144,137 @@ cd dbt_project
 cd ..
 ```
 
-This creates the analytics models in the `analytics` schema.
+This creates 6 analytics models in the `analytics` schema and runs 14 data-quality tests.
 
-## Step 7 - View the data
+---
 
-- **Kafka UI** - http://localhost:8080 (Topics -> sensor_air -> Messages to see readings flowing through Kafka)
-- **Grafana** - http://localhost:3000 (login admin / admin)
-  - Add a PostgreSQL data source: Host `timescaledb:5432`, Database `smartcity`, User `cityadmin`, Password `citypass123`, SSL Mode `disable`
-  - Example panel query:
+## 8. See the dashboards in Grafana
 
+Open your browser at **http://localhost:3000**
+
+Log in:
+- Username: `admin`
+- Password: `admin`
+(It may ask you to set a new password - set anything, or skip if allowed.)
+
+### Connect Grafana to the database (one time)
+
+1. Left menu: Connections > Data sources > Add data source > PostgreSQL
+2. Fill in EXACTLY these values:
+
+| Field | Value |
+| --- | --- |
+| Host URL | `timescaledb:5432` |
+| Database | `smartcity` |
+| Username | `cityadmin` |
+| Password | `citypass123` |
+| TLS/SSL Mode | `disable` |
+
+3. Click "Save & test" - you should see a green "Database Connection OK".
+
+(Use `timescaledb:5432` as the host, NOT localhost - inside Docker the containers find each other by name.)
+
+### Build a dashboard panel
+
+Dashboards > New > New dashboard > Add visualization > pick the PostgreSQL data source > switch the query editor to "Code" > paste a query below > set the time range (top-right) to "Last 15 minutes" > Run query > Save.
+
+Make sure the producer and consumer (Step 6) are running so there is live data.
+
+Queries for the 5 dashboards:
+
+Air quality (PM2.5 by zone):
 ```
 SELECT "timestamp" AS time, pm25_level, zone_id FROM raw_air_quality WHERE "timestamp" > NOW() - INTERVAL '1 hour' ORDER BY "timestamp";
 ```
 
-- **dbt docs / lineage graph** - from inside dbt_project: `..\dbt-venv\Scripts\dbt.exe docs generate --profiles-dir .` then `..\dbt-venv\Scripts\dbt.exe docs serve --profiles-dir . --port 8081` and open http://localhost:8081
+Traffic (vehicle count by zone):
+```
+SELECT "timestamp" AS time, vehicle_count, zone_id FROM raw_traffic WHERE "timestamp" > NOW() - INTERVAL '1 hour' ORDER BY "timestamp";
+```
 
-## dbt models (answers the 5 business questions)
+Energy (consumption by zone):
+```
+SELECT "timestamp" AS time, kwh_consumed, zone_id FROM raw_energy WHERE "timestamp" > NOW() - INTERVAL '1 hour' ORDER BY "timestamp";
+```
+
+Sensor health (use the Table visualization, not Time series):
+```
+SELECT sensor_id, recent_readings, recent_avg_pm25, health_status FROM analytics.sensor_health ORDER BY health_status;
+```
+
+Traffic vs pollution correlation (use the Table visualization):
+```
+SELECT zone_id, hours_compared, avg_vehicles, avg_pm25, traffic_pm25_correlation FROM analytics.traffic_pollution_correlation ORDER BY traffic_pm25_correlation DESC NULLS LAST;
+```
+
+You can also view raw Kafka messages at http://localhost:8080 (Topics > sensor_air > Messages).
+
+---
+
+## All the passwords and connection details (in one place)
+
+These are set in `docker-compose.yml` and are fine for local/classroom use.
+
+| Thing | Value |
+| --- | --- |
+| Database name | `smartcity` |
+| Database user | `cityadmin` |
+| Database password | `citypass123` |
+| Database host (from your machine) | `localhost`, port `5432` |
+| Database host (from inside Docker, e.g. Grafana) | `timescaledb`, port `5432` |
+| Grafana URL | http://localhost:3000 |
+| Grafana login | `admin` / `admin` |
+| Kafka UI URL | http://localhost:8080 |
+| Kafka (from your machine) | `localhost:9092` |
+
+Note: storing passwords in the repo is fine for a class project on a local machine, but in a real deployment these would be kept in environment variables / a secrets manager, never committed.
+
+---
+
+## Everyday commands
+
+| To do this | Run |
+| --- | --- |
+| Stop everything (data is kept) | `docker compose down` |
+| Start everything again | `docker compose up -d` |
+| Check the database row count | `docker exec -it smartcity_timescaledb psql -U cityadmin -d smartcity -c "SELECT COUNT(*) FROM raw_air_quality;"` |
+| Rebuild dbt models | `cd dbt_project` then `..\dbt-venv\Scripts\dbt.exe run --profiles-dir .` |
+
+---
+
+## dbt models (answer the 5 business questions)
 
 | Model | Business Question |
 | --- | --- |
 | air_quality_hourly | BQ1 - air quality by zone and hour |
-| threshold_breaches | BQ1 - hours exceeding the PM2.5 safety limit |
+| threshold_breaches | BQ1 - hours over the PM2.5 safety limit |
 | traffic_hourly | BQ2 - traffic volume and speed by zone |
 | energy_hourly | BQ3 - energy consumption and peak demand by zone |
 | sensor_health | BQ4 - dead / drifting / silent sensor detection |
-| traffic_pollution_correlation | BQ5 - correlation between traffic and pollution |
+| traffic_pollution_correlation | BQ5 - traffic vs pollution correlation |
 
-## Useful commands
+---
 
-- Stop everything (data is kept): `docker compose down`
-- Start again later: `docker compose up -d`
-- Check a table: `docker exec -it smartcity_timescaledb psql -U cityadmin -d smartcity -c "SELECT COUNT(*) FROM raw_air_quality;"`
+## What is built
 
-## Connection details
-
-- Host: `localhost` (or `timescaledb` from inside Docker)
-- Port: `5432`
-- Database: `smartcity`
-- User: `cityadmin`
-- Password: `citypass123`
-
-## What is built so far
-
-- IoT simulator: 3 sensor types, 4 zones with distinct profiles, rush-hour patterns, and 3 injected failures (dead, drifting, silent sensors)
-- Kafka streaming for all 3 sensor types (producer -> topics -> consumer)
+- IoT simulator: 3 sensor types, 4 zones, rush-hour patterns, 3 injected failures
+- Kafka streaming for all 3 sensor types
 - TimescaleDB storage with hypertables
-- Complete dbt transformation layer: 6 models answering all 5 business questions, 14 data-quality tests, auto-generated docs and lineage graph
-- Live Grafana dashboard (air quality)
+- dbt transformation layer: 6 models, 14 tests, docs + lineage graph
+- 5 Grafana dashboards (one per business question)
 
 ## Not yet built
 
-- Great Expectations data quality suite
+- Great Expectations data-quality suite
 - Airflow orchestration (scheduling the dbt and quality jobs)
-- Remaining Grafana dashboards (traffic, energy, sensor health, correlation)
 - Project report and remaining diagrams
+
+---
+
+## Troubleshooting
+
+- "cannot connect to the Docker daemon" -> Docker Desktop is not open. Open it and wait for the whale icon to be steady.
+- Grafana shows "No data" -> make sure the producer AND consumer are running, and the time range is "Last 15 minutes".
+- Grafana data source error "no default database" -> you have two PostgreSQL data sources; use the one whose Host is `timescaledb:5432` and Database is `smartcity`.
+- `pip` "Access is denied" -> use `python -m pip install ...` instead.
+- dbt crashes on install -> you are probably on Python 3.14; create the venv with Python 3.12 or 3.13.
