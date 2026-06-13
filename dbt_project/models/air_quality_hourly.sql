@@ -1,5 +1,6 @@
 -- Hourly average air quality per zone
 -- Turns thousands of raw 5-second readings into one row per zone per hour.
+   {{ config(materialized='table') }}
 
 SELECT
     zone_id,
