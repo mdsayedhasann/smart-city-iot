@@ -1,0 +1,18 @@
+# Data quality checks for the raw sensor tables
+
+checks for raw_air_quality:
+  - row_count > 0
+  - missing_count(zone_id) = 0
+  - missing_count(pm25_level) = 0
+  - min(pm25_level) >= 0
+  - max(pm25_level) <= 500
+
+checks for raw_traffic:
+  - row_count > 0
+  - missing_count(zone_id) = 0
+  - min(vehicle_count) >= 0
+
+checks for raw_energy:
+  - row_count > 0
+  - missing_count(zone_id) = 0
+  - min(kwh_consumed) >= 0

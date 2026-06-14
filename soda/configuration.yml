@@ -1,0 +1,8 @@
+data_source smartcity:
+  type: postgres
+  host: localhost
+  port: 5432
+  username: cityadmin
+  password: citypass123
+  database: smartcity
+  schema: public
